@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   shouldSendAlert,
   toPendingRetryView,
+  pendingRetryAlertText,
   classifyTelegramSendError,
   classifySendError,
   ALERT_THRESHOLD_MS,
@@ -245,5 +246,39 @@ describe('classifySendError (Discord shapes)', () => {
     // The status is the number right after the prefix; the body may carry
     // its own codes (Discord echoes "401: Unauthorized" in the JSON).
     expect(classifySendError('Discord API 503: {"code":40001}')).toBe('transient')
+  })
+})
+
+// Follow-up to #1978: a retry held by the usage-limit gate can wait for hours
+// (until the plan's limit resets) and goes through the normal stage-1 / stage-2
+// alerts. The alert names the reason, so it does not read as a stuck retry.
+describe('pendingRetryAlertText', () => {
+  const now = 10_000_000
+  const view = (lastReason: string | null) => toPendingRetryView({
+    id: 1, task_name: 'morning-digest', agent_name: 'limitagent', first_attempt: now - 2 * 60 * 60 * 1000,
+    last_attempt: now, attempt_count: 120, last_reason: lastReason, alert_sent_at: null,
+  }, now)
+
+  it('names usage-limited as the reason and says it is not a stuck retry', () => {
+    const text = pendingRetryAlertText(view('usage-limited'), '[scheduler]', 120, 'T0')
+    expect(text).toContain('[scheduler] A(z) "morning-digest" (limitagent) ütemezett feladat 120 perce várakozik')
+    expect(text).toContain('használati limitbe ütközött (ok: usage-limited)')
+    expect(text).toContain('Ez nem elakadt ismétlés.')
+    expect(text).toContain('A limit visszaállása után a feladat magától lefut')
+    expect(text).not.toContain('A rendszer tovább próbálkozik')
+  })
+
+  it('a busy retry keeps the generic wording, with no usage-limit reason', () => {
+    const text = pendingRetryAlertText(view('busy'), '[scheduler]', 120, 'T0')
+    expect(text).toContain('ütemezett feladat 120 perce várakozik.')
+    expect(text).toContain('A rendszer tovább próbálkozik')
+    expect(text).not.toContain('usage-limited')
+  })
+
+  it('the mcp-missing and first-run wordings are unchanged', () => {
+    expect(pendingRetryAlertText(view('mcp-missing:gmail'), '[s]', 120, 'T0'))
+      .toContain('nem futnak a cél-sessionben: gmail.')
+    expect(pendingRetryAlertText(view('first-run'), '[s]', 120, 'T0'))
+      .toContain('első-indítási képernyőjén áll')
   })
 })

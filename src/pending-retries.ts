@@ -171,6 +171,49 @@ export interface PendingRetryView {
   ownerAlertDue: boolean
 }
 
+// Build the pending-retry alert body shared by stage 1 (main agent,
+// inter-agent) and stage 2 (owner, channel) -- the substance (which task,
+// why stuck, how long) is identical, only the delivery channel differs.
+export function pendingRetryAlertText(view: PendingRetryView, prefix: string, ageMinutes: number, firstAttempt: string): string {
+  // A retry stuck on a dead required MCP names the server(s): the operator's
+  // fix is restarting an MCP, not freeing up a busy session.
+  const mcpMissing = view.lastReason?.startsWith('mcp-missing')
+    ? view.lastReason.slice('mcp-missing:'.length) || 'ismeretlen'
+    : null
+  // A first-run-gated session (fresh install: mappa-trust dialog / belépés-
+  // választó) needs the operator to know the ACTUAL blocker: the fix is a
+  // one-time login/consent on the agent session, not waiting for a busy
+  // session to free up.
+  const firstRunStuck = view.lastReason === 'first-run'
+  // A retry held by the usage-limit gate (#1978) waits for the plan's limit
+  // to reset, which can take hours. Without the reason the notice reads as a
+  // stuck retry; with it, the operator knows there is nothing to unstick.
+  const usageLimited = view.lastReason === 'usage-limited'
+  return (mcpMissing
+    ? [
+        `${prefix} A(z) "${view.taskName}" (${view.agentName}) feladat NEM tud lefutni: a szükséges MCP szerver(ek) nem futnak a cél-sessionben: ${mcpMissing}.`,
+        `Első próbálkozás: ${firstAttempt} (${ageMinutes} perce).`,
+        'Amint az MCP szerver újra elérhető, a feladat magától lefut; a dashboard /Ütemezések oldalán visszavonható.',
+      ]
+    : firstRunStuck
+    ? [
+        `${prefix} A(z) "${view.taskName}" (${view.agentName}) feladat NEM tud lefutni: az agent session a Claude Code első-indítási képernyőjén áll (mappa-jóváhagyás vagy belépés szükséges).`,
+        `Első próbálkozás: ${firstAttempt} (${ageMinutes} perce).`,
+        `A rendszer a jóváhagyás-dialogokat magától továbblépteti; ha belépés kell: tmux attach -t agent-${view.agentName}, majd válaszd ki a belépési módot. Utána a feladat magától lefut.`,
+      ]
+    : usageLimited
+    ? [
+        `${prefix} A(z) "${view.taskName}" (${view.agentName}) ütemezett feladat ${ageMinutes} perce várakozik, mert a cél-session használati limitbe ütközött (ok: usage-limited). Ez nem elakadt ismétlés.`,
+        `Első próbálkozás: ${firstAttempt}.`,
+        'A limit visszaállása után a feladat magától lefut; a dashboard /Ütemezések oldalán visszavonható.',
+      ]
+    : [
+        `${prefix} A(z) "${view.taskName}" (${view.agentName}) ütemezett feladat ${ageMinutes} perce várakozik.`,
+        `Első próbálkozás: ${firstAttempt}.`,
+        'A rendszer tovább próbálkozik; a dashboard /Ütemezések oldalán visszavonható.',
+      ]).join('\n')
+}
+
 /**
  * Project a raw DB row into the UI view, including the derived `ageMs`
  * (for display) and `alertDue` (= shouldSendAlert). Keeping the derivation

@@ -47,7 +47,7 @@ import {
   markScheduledTaskKanbanWaiting,
   createAgentMessage,
 } from '../db.js'
-import { toPendingRetryView, classifySendError, OWNER_ESCALATION_EXTRA_MS, type PendingRetryView } from '../pending-retries.js'
+import { toPendingRetryView, classifySendError, pendingRetryAlertText, OWNER_ESCALATION_EXTRA_MS, type PendingRetryView } from '../pending-retries.js'
 import {
   SCHEDULED_TASK_PREAMBLE,
   wrapScheduledTask,
@@ -2245,39 +2245,6 @@ function logCatchUpSummary(
     { caughtUp: caughtUp.length, stale: stale.length, gapMinutes: Math.round(gapMs / 60000) },
     `catch-up summary (log-only: the gap is sleep-origin downtime, not an incident): ${lines.join(' ')}`,
   )
-}
-
-// Build the pending-retry alert body shared by stage 1 (main agent,
-// inter-agent) and stage 2 (owner, channel) -- the substance (which task,
-// why stuck, how long) is identical, only the delivery channel differs.
-function pendingRetryAlertText(view: PendingRetryView, prefix: string, ageMinutes: number, firstAttempt: string): string {
-  // A retry stuck on a dead required MCP names the server(s): the operator's
-  // fix is restarting an MCP, not freeing up a busy session.
-  const mcpMissing = view.lastReason?.startsWith('mcp-missing')
-    ? view.lastReason.slice('mcp-missing:'.length) || 'ismeretlen'
-    : null
-  // A first-run-gated session (fresh install: mappa-trust dialog / belépés-
-  // választó) needs the operator to know the ACTUAL blocker: the fix is a
-  // one-time login/consent on the agent session, not waiting for a busy
-  // session to free up.
-  const firstRunStuck = view.lastReason === 'first-run'
-  return (mcpMissing
-    ? [
-        `${prefix} A(z) "${view.taskName}" (${view.agentName}) feladat NEM tud lefutni: a szükséges MCP szerver(ek) nem futnak a cél-sessionben: ${mcpMissing}.`,
-        `Első próbálkozás: ${firstAttempt} (${ageMinutes} perce).`,
-        'Amint az MCP szerver újra elérhető, a feladat magától lefut; a dashboard /Ütemezések oldalán visszavonható.',
-      ]
-    : firstRunStuck
-    ? [
-        `${prefix} A(z) "${view.taskName}" (${view.agentName}) feladat NEM tud lefutni: az agent session a Claude Code első-indítási képernyőjén áll (mappa-jóváhagyás vagy belépés szükséges).`,
-        `Első próbálkozás: ${firstAttempt} (${ageMinutes} perce).`,
-        `A rendszer a jóváhagyás-dialogokat magától továbblépteti; ha belépés kell: tmux attach -t agent-${view.agentName}, majd válaszd ki a belépési módot. Utána a feladat magától lefut.`,
-      ]
-    : [
-        `${prefix} A(z) "${view.taskName}" (${view.agentName}) ütemezett feladat ${ageMinutes} perce várakozik.`,
-        `Első próbálkozás: ${firstAttempt}.`,
-        'A rendszer tovább próbálkozik; a dashboard /Ütemezések oldalán visszavonható.',
-      ]).join('\n')
 }
 
 // Stage 1: inter-agent notice to the main agent once a pending retry crosses
